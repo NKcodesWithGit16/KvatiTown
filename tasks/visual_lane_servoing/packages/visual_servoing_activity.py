@@ -18,7 +18,39 @@ _white_lower = np.array([_h.get('white_lower_h', 0),   _h.get('white_lower_s', 0
 _white_upper = np.array([_h.get('white_upper_h', 0), _h.get('white_upper_s', 0), _h.get('white_upper_v', 0)])
 
 def detect_lane_markings(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    raise NotImplementedError("TODO: Implement this function")
+    h, w = image.shape[:2]
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    blurred = cv2.GaussianBlur(gray, (0, 0), 3)
+    sobelx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0)
+    sobely = cv2.Sobel(blurred, cv2.CV_64F, 0, 1)
+    gmag = np.sqrt(sobelx * sobelx + sobely * sobely)
+
+    mask_mag = (gmag > 40)
+    mask_sx_pos = (sobelx > 0)
+    mask_sx_neg = (sobelx < 0)
+    mask_sy_neg = (sobely < 0)
+
+    mask_ground = np.zeros((h, w), dtype=np.uint8)
+    mask_ground[int(h * 0.4):, :] = 1
+
+    mid = w // 2
+    mask_left_half = np.zeros((h, w), dtype=np.uint8)
+    mask_left_half[:, :mid] = 1
+    mask_right_half = np.zeros((h, w), dtype=np.uint8)
+    mask_right_half[:, mid:] = 1
+
+    mask_yellow = cv2.inRange(hsv, _yellow_lower, _yellow_upper) > 0
+    mask_white = cv2.inRange(hsv, _white_lower, _white_upper) > 0
+
+    mask_left = (mask_ground * mask_left_half * mask_mag *
+                 mask_sx_neg * mask_sy_neg * mask_yellow).astype(np.uint8)
+    mask_right = (mask_ground * mask_right_half * mask_mag *
+                  mask_sx_pos * mask_sy_neg * mask_white).astype(np.uint8)
+
+    return mask_left, mask_right
 
 
 

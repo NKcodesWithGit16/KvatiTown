@@ -71,6 +71,7 @@ game_stats = {
 }
 control_thread = None
 stop_event = threading.Event()
+current_view = 'normal'  # 'normal' | 'mask' | 'overlay'
 
 
 def posneg_colormap(matrix):
@@ -88,8 +89,8 @@ def posneg_colormap(matrix):
 _last_status_print = 0.0
 
 def create_visualization(frame):
-    """Create 2x2 visualization grid with matrices like real server."""
-    global agent, wheels, last_frame_info, game_stats, _last_status_print
+    """Create visualization; mode is controlled by current_view global."""
+    global agent, wheels, last_frame_info, game_stats, _last_status_print, current_view
 
     if frame is None:
         placeholder = np.zeros((240, 640, 3), dtype=np.uint8)
@@ -133,6 +134,20 @@ def create_visualization(frame):
               f"v={v_val:.2f}  ω={omega_val:+.2f} | "
               f"gain={config.gain:.2f}  const={config.const:.2f}  thr={config.detection_threshold:.0f}"
               f"{game_info}")
+
+    # Single-panel views (mask / overlay)
+    if current_view in ('mask', 'overlay'):
+        img_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        mask_u8 = debug_info['preprocessed']  # float [0,1]
+        if current_view == 'mask':
+            mask_color = cv2.applyColorMap(
+                (mask_u8 * 255).astype(np.uint8), cv2.COLORMAP_HOT)
+            return mask_color
+        else:  # overlay
+            overlay = img_bgr.copy()
+            duck_pixels = (mask_u8 > 0)
+            overlay[duck_pixels] = [0, 230, 0]  # green in BGR
+            return overlay
 
     # Resize
     h, w = frame.shape[:2]
@@ -277,6 +292,36 @@ def get_motors():
     return jsonify(last_frame_info)
 
 
+@app.route('/status')
+def status():
+    global config, last_frame_info
+    lo = preprocessing_module.lower_hsv
+    hi = preprocessing_module.upper_hsv
+    return jsonify({
+        'left_speed':  last_frame_info.get('pwm_left', 0.0),
+        'right_speed': last_frame_info.get('pwm_right', 0.0),
+        'left_det':    int(last_frame_info.get('left_sum', 0)),
+        'right_det':   int(last_frame_info.get('right_sum', 0)),
+        'config': {
+            'const': config.const if config else 0.3,
+            'gain':  config.gain  if config else 0.9,
+            'detection_threshold': config.detection_threshold if config else 1000.0,
+        },
+        'hsv': {
+            'lower_h': int(lo[0]), 'lower_s': int(lo[1]), 'lower_v': int(lo[2]),
+            'upper_h': int(hi[0]), 'upper_s': int(hi[1]), 'upper_v': int(hi[2]),
+        },
+    })
+
+
+@app.route('/set_view', methods=['POST'])
+def set_view():
+    global current_view
+    data = request.json
+    current_view = data.get('view', 'normal')
+    return jsonify({'status': 'ok'})
+
+
 @app.route('/update_config', methods=['POST'])
 def update_config():
     global config
@@ -328,12 +373,12 @@ def main():
     wheels.trim = 0  # simulation wheels are symmetric, no trim needed
     print(f"  Wheels: {args.godot_host}:{args.wheel_port}")
 
-    # Initialize camera driver
+    # Initialize camera driver (Python connects TO Godot's camera server)
     print("\n[2/3] Initializing camera driver...")
-    print(f"  Waiting for Godot to connect on port {args.frame_port}...")
-    camera_cfg = GodotCameraConfig(host="0.0.0.0", port=args.frame_port)
+    print(f"  Connecting to Godot camera server on port {args.frame_port}...")
+    camera_cfg = GodotCameraConfig(host="127.0.0.1", port=args.frame_port)
     camera = GodotCameraDriver(godot_config=camera_cfg)
-    camera.start()  # Start camera and wait for Godot connection
+    camera.start()  # Connect to Godot and start receiving frames
     print(f"  Camera: connected!")
 
     # Create agent with loaded config (command line args can override)

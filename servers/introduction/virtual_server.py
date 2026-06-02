@@ -60,6 +60,23 @@ def control_loop():
             current_speeds['left'] = left
             current_speeds['right'] = right
 
+            if keys_copy.get('left'):
+                direction = 'left'
+            elif keys_copy.get('right'):
+                direction = 'right'
+            elif keys_copy.get('up'):
+                direction = 'forward'
+            else:
+                direction = 'stop'
+
+            try:
+                led_colors = led_control.set_turning_leds(direction)
+                for idx, color in led_colors.items():
+                    if idx in _virtual_led_states:
+                        _virtual_led_states[idx] = list(color)
+            except Exception as e:
+                print(f"[ControlLoop] LED code error: {e}")
+
             if wheels:
                 wheels.set_wheels_speed(left, right)
 
